@@ -1,0 +1,19 @@
+# Entorno — NUNCA commitear valores reales
+.env
+.env.*
+!.env.example
+
+# Sistema / editor
+.DS_Store
+*.log
+.idea/
+.vscode/
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
