@@ -6,12 +6,12 @@ x402 micropayments. ~1% protocol fee (0.7% nodeit / 0.3% treasury), settled trus
 
 - ⛽ **Gasless for payers** — they sign an ERC-3009 authorization; the nodeit pays the gas.
 - 🧩 **Stripe-like DX** — `payment_intents.create`, `webhooks.verify`.
-- 🌐 **Open network** — no lock-in, self-host or use any nodeit.
+- 🌐 **Open network** — no lock-in: any nodeit can settle your payments, and anyone can run one.
 
 ## Install
 
 ```bash
-pip install coatipay
+pip install coatipay-sdk
 ```
 
 Requires Python ≥ 3.11. Depends on `httpx` and `pydantic`.
@@ -126,5 +126,5 @@ CoatiPay(
 ## Links
 
 - Repo, docs & protocol spec: https://github.com/lacasoft/coatipay-protocol
-- Source: [`packages/sdk-python`](https://github.com/lacasoft/coatipay-protocol/tree/master/packages/sdk-python)
+- Source: [`coatipay-python-sdk`](https://github.com/lacasoft/coatipay-python-sdk)
 - License: Apache-2.0
