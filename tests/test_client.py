@@ -152,16 +152,21 @@ class TestPaymentIntentsList:
 
 # ── PaymentIntents.submit_authorization (ERC-3009) ─────────────────
 
+# Identificador on-chain del intent (bytes32): es lo que viaja como nonce.
+INTENT_ID = "0xfeed000000000000000000000000000000000000000000000000000000000000"
+
+
 class TestSubmitAuthorization:
     @pytest.mark.asyncio
     async def test_submit_authorization_uses_v1_path(self):
         from coatipay.eip712 import SignedAuthorization
 
+        # El nonce es el identificador on-chain del intent que se paga.
         auth = SignedAuthorization(
             payer="0x" + "aa" * 20,
             valid_after=0,
             valid_before=2_000_000_000,
-            nonce="0x" + "00" * 32,
+            nonce=INTENT_ID,
             signature="0x" + "11" * 65,
         )
         mock_response = httpx.Response(200, json={"status": "queued"})
@@ -178,7 +183,7 @@ class TestSubmitAuthorization:
     async def test_submit_authorization_batch_uses_v1_path(self):
         from coatipay.eip712 import SignedAuthorization
 
-        auth = SignedAuthorization("0x" + "aa" * 20, 0, 2_000_000_000, "0x" + "00" * 32, "0x" + "11" * 65)
+        auth = SignedAuthorization("0x" + "aa" * 20, 0, 2_000_000_000, INTENT_ID, "0x" + "11" * 65)
         mock_response = httpx.Response(200, json={"queued": 1, "rejected": 0})
         with patch.object(httpx.AsyncClient, "request", new_callable=AsyncMock, return_value=mock_response) as mock_req:
             client = CoatiPay(api_key="sk_live_test")

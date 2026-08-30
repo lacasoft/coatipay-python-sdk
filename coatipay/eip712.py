@@ -1,7 +1,6 @@
 """EIP-712 / ERC-3009 helpers for gasless USDC settlement on Base."""
 from __future__ import annotations
 
-import os
 import re
 import time
 from dataclasses import dataclass
@@ -42,7 +41,13 @@ RECEIVE_WITH_AUTHORIZATION_TYPEHASH = keccak(
 
 @dataclass
 class SignedAuthorization:
-    """A signed ERC-3009 ReceiveWithAuthorization message, ready to submit."""
+    """
+    Autorización ERC-3009 ReceiveWithAuthorization ya firmada, lista para enviar.
+
+    `nonce` **es el identificador on-chain del intent** (`intent_id`), no un
+    valor aleatorio: el contrato exige esa igualdad para que la firma del
+    pagador no pueda aplicarse a otro intent.
+    """
 
     payer: str
     valid_after: int
@@ -91,9 +96,21 @@ def _encode_abi(types: list[str], values: list) -> bytes:
     return b"".join(parts)
 
 
-def generate_nonce() -> str:
-    """Generate a cryptographically random 32-byte nonce as 0x-prefixed hex."""
-    return to_hex(os.urandom(32))
+def _validate_intent_id(value: str) -> str:
+    """
+    Comprueba que el intent llega como bytes32 (`0x` + 64 hex).
+
+    En JavaScript el tipo `Hex` y el typecheck atrapan un intent mal formado
+    antes de ejecutar; aquí no hay compilador, así que se valida en tiempo de
+    ejecución. Sirve sobre todo para distinguirlo del id de la API (`pi_...`),
+    que es otra cosa: el contrato compara contra el identificador on-chain.
+    """
+    if not isinstance(value, str) or not re.fullmatch(r"0x[0-9a-fA-F]{64}", value):
+        raise ValueError(
+            f"Invalid intent_id: {value!r} "
+            "(expected the on-chain intent id, 32-byte hex: 0x + 64 chars)"
+        )
+    return value
 
 
 def build_authorization_typed_data(
@@ -102,15 +119,27 @@ def build_authorization_typed_data(
     settlement_hub: str,
     chain: SupportedChain,
     *,
-    nonce: str | None = None,
+    intent_id: str,
     valid_after: int | None = None,
     valid_before: int | None = None,
 ) -> dict:
-    """Build the EIP-712 typed data for USDC ReceiveWithAuthorization."""
+    """
+    Construye el typed data EIP-712 de USDC `ReceiveWithAuthorization`.
+
+    `intent_id` es el identificador **on-chain** del intent que se paga
+    (bytes32), y es obligatorio: de él sale el nonce de la autorización. El
+    contrato exige esa atadura porque quien envía la transacción —el nodeit,
+    la parte no confiable— podía, con un nonce aleatorio, aplicar la firma
+    del pagador a otro intent y quedarse el pago.
+
+    El campo del mensaje se sigue llamando `nonce`: lo fija ERC-3009. Lo que
+    cambia es de dónde sale su valor.
+    """
     now_seconds = int(time.time())
     valid_after = valid_after if valid_after is not None else 0
     valid_before = valid_before if valid_before is not None else now_seconds + DEFAULT_VALIDITY_WINDOW_SECONDS
-    nonce = nonce if nonce is not None else generate_nonce()
+    # El nonce ES el intent: así la firma solo sirve para pagar ese intent.
+    nonce = _validate_intent_id(intent_id)
 
     return {
         "domain": {
@@ -191,17 +220,22 @@ def sign_authorization(
     chain: SupportedChain,
     private_key: str,
     *,
-    nonce: str | None = None,
+    intent_id: str,
     valid_after: int | None = None,
     valid_before: int | None = None,
 ) -> SignedAuthorization:
-    """Build and sign a ReceiveWithAuthorization message."""
+    """
+    Construye y firma un mensaje `ReceiveWithAuthorization`.
+
+    `intent_id` (bytes32 on-chain) es obligatorio: la firma queda atada a ese
+    intent y solo a ese, para que el nodeit no pueda redirigir el cobro.
+    """
     typed_data = build_authorization_typed_data(
         payer=payer,
         amount=amount,
         settlement_hub=settlement_hub,
         chain=chain,
-        nonce=nonce,
+        intent_id=intent_id,
         valid_after=valid_after,
         valid_before=valid_before,
     )
