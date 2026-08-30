@@ -6,7 +6,7 @@ import hashlib
 import json
 import time
 
-from coatipay import CoatiPay, CoatiPayError, CoatiPaySDKError
+from coatipay import CoatiPay, CoatiPayError, CoatiPaySDKError, intent_id_to_bytes32
 
 
 # ── Client initialization ─────────────────────────────────────────
@@ -152,8 +152,10 @@ class TestPaymentIntentsList:
 
 # ── PaymentIntents.submit_authorization (ERC-3009) ─────────────────
 
-# Identificador on-chain del intent (bytes32): es lo que viaja como nonce.
-INTENT_ID = "0xfeed000000000000000000000000000000000000000000000000000000000000"
+# El id del intent es texto (`pi_...`); lo que viaja como nonce es su
+# identificador on-chain, derivado por el SDK.
+INTENT_ID = "pi_abc"
+INTENT_NONCE = intent_id_to_bytes32(INTENT_ID)
 
 
 class TestSubmitAuthorization:
@@ -166,16 +168,16 @@ class TestSubmitAuthorization:
             payer="0x" + "aa" * 20,
             valid_after=0,
             valid_before=2_000_000_000,
-            nonce=INTENT_ID,
+            nonce=INTENT_NONCE,
             signature="0x" + "11" * 65,
         )
         mock_response = httpx.Response(200, json={"status": "queued"})
         with patch.object(httpx.AsyncClient, "request", new_callable=AsyncMock, return_value=mock_response) as mock_req:
             client = CoatiPay(api_key="sk_live_test")
-            await client.payment_intents.submit_authorization("pi_abc", auth)
+            await client.payment_intents.submit_authorization(INTENT_ID, auth)
             args, kwargs = mock_req.call_args
             assert args[0] == "POST"
-            assert args[1] == "/v1/payment_intents/pi_abc/authorize"
+            assert args[1] == f"/v1/payment_intents/{INTENT_ID}/authorize"
             assert kwargs["json"]["payer"] == auth.payer
             assert kwargs["json"]["valid_before"] == "2000000000"
 
@@ -183,7 +185,7 @@ class TestSubmitAuthorization:
     async def test_submit_authorization_batch_uses_v1_path(self):
         from coatipay.eip712 import SignedAuthorization
 
-        auth = SignedAuthorization("0x" + "aa" * 20, 0, 2_000_000_000, INTENT_ID, "0x" + "11" * 65)
+        auth = SignedAuthorization("0x" + "aa" * 20, 0, 2_000_000_000, INTENT_NONCE, "0x" + "11" * 65)
         mock_response = httpx.Response(200, json={"queued": 1, "rejected": 0})
         with patch.object(httpx.AsyncClient, "request", new_callable=AsyncMock, return_value=mock_response) as mock_req:
             client = CoatiPay(api_key="sk_live_test")

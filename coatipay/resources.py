@@ -76,10 +76,10 @@ class PaymentIntents:
         """
         Construye el typed data EIP-712 de USDC `ReceiveWithAuthorization`.
 
-        Ojo con el nombre: aquí `intent_id` es el identificador **on-chain**
-        del intent (bytes32), del que se deriva el nonce; el que reciben
-        `submit_authorization` / `submit_authorization_batch` es el id de la
-        API (`pi_...`).
+        `intent_id` es el mismo id textual (`pi_...`) que devuelve la API y
+        que reciben `submit_authorization` / `submit_authorization_batch`: de
+        él se deriva el nonce de la autorización. Nadie tiene que calcular el
+        hash on-chain a mano.
         """
         return build_authorization_typed_data(
             payer=payer,
@@ -106,8 +106,8 @@ class PaymentIntents:
         """
         Construye y firma un mensaje `ReceiveWithAuthorization`.
 
-        El nonce sale del `intent_id` (bytes32 on-chain), así que la firma
-        solo sirve para pagar ese intent: el nodeit no puede redirigirla.
+        El nonce se deriva del `intent_id` textual (`pi_...`), así que la
+        firma solo sirve para pagar ese intent: el nodeit no puede redirigirla.
         """
         return sign_authorization(
             payer=payer,
