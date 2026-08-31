@@ -69,17 +69,24 @@ class PaymentIntents:
         settlement_hub: str,
         chain: str,
         *,
-        nonce: str | None = None,
+        intent_id: str,
         valid_after: int | None = None,
         valid_before: int | None = None,
     ) -> dict:
-        """Build the EIP-712 typed data for USDC ReceiveWithAuthorization."""
+        """
+        Construye el typed data EIP-712 de USDC `ReceiveWithAuthorization`.
+
+        `intent_id` es el mismo id textual (`pi_...`) que devuelve la API y
+        que reciben `submit_authorization` / `submit_authorization_batch`: de
+        él se deriva el nonce de la autorización. Nadie tiene que calcular el
+        hash on-chain a mano.
+        """
         return build_authorization_typed_data(
             payer=payer,
             amount=amount,
             settlement_hub=settlement_hub,
             chain=chain,  # type: ignore[arg-type]
-            nonce=nonce,
+            intent_id=intent_id,
             valid_after=valid_after,
             valid_before=valid_before,
         )
@@ -92,18 +99,23 @@ class PaymentIntents:
         chain: str,
         private_key: str,
         *,
-        nonce: str | None = None,
+        intent_id: str,
         valid_after: int | None = None,
         valid_before: int | None = None,
     ) -> SignedAuthorization:
-        """Build and sign a ReceiveWithAuthorization message."""
+        """
+        Construye y firma un mensaje `ReceiveWithAuthorization`.
+
+        El nonce se deriva del `intent_id` textual (`pi_...`), así que la
+        firma solo sirve para pagar ese intent: el nodeit no puede redirigirla.
+        """
         return sign_authorization(
             payer=payer,
             amount=amount,
             settlement_hub=settlement_hub,
             chain=chain,  # type: ignore[arg-type]
             private_key=private_key,
-            nonce=nonce,
+            intent_id=intent_id,
             valid_after=valid_after,
             valid_before=valid_before,
         )

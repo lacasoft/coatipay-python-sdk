@@ -1,7 +1,6 @@
 """EIP-712 / ERC-3009 helpers for gasless USDC settlement on Base."""
 from __future__ import annotations
 
-import os
 import re
 import time
 from dataclasses import dataclass
@@ -42,7 +41,13 @@ RECEIVE_WITH_AUTHORIZATION_TYPEHASH = keccak(
 
 @dataclass
 class SignedAuthorization:
-    """A signed ERC-3009 ReceiveWithAuthorization message, ready to submit."""
+    """
+    Autorización ERC-3009 ReceiveWithAuthorization ya firmada, lista para enviar.
+
+    `nonce` **es el identificador on-chain del intent** —la derivación del
+    `intent_id` textual—, no un valor aleatorio: el contrato exige esa igualdad
+    para que la firma del pagador no pueda aplicarse a otro intent.
+    """
 
     payer: str
     valid_after: int
@@ -91,9 +96,34 @@ def _encode_abi(types: list[str], values: list) -> bytes:
     return b"".join(parts)
 
 
-def generate_nonce() -> str:
-    """Generate a cryptographically random 32-byte nonce as 0x-prefixed hex."""
-    return to_hex(os.urandom(32))
+def intent_id_to_bytes32(intent_id: str) -> str:
+    """
+    Identificador on-chain de un intent, a partir del `pi_…` que devuelve la API.
+
+    Es `keccak256(utf8(id))`, la misma derivación que usan el contrato y el
+    daemon. Es pública porque quien construya la autorización a mano necesita
+    exactamente este valor: calcularlo por su cuenta y equivocarse produce una
+    firma atada a un intent que no existe, y ese fallo solo aparece al liquidar.
+
+    De lo que se puede comprobar de verdad, se comprueba: que llegue un texto
+    no vacío, y que no sea un valor ya hasheado. Lo segundo importa porque es
+    el único error de forma que este SDK sabe reconocer —pasar el bytes32 en
+    vez del id textual—, y hashearlo otra vez daría un nonce plausible pero
+    equivocado, en silencio. No se exige el prefijo `pi_`: el formato del id lo
+    fija la API, no el SDK, y atarse a él sería teatro que rompe con el primer
+    id que no lo lleve.
+    """
+    if not isinstance(intent_id, str) or not intent_id.strip():
+        raise ValueError(
+            "intent_id is required (the textual intent id returned by the API, e.g. 'pi_abc123')"
+        )
+    if re.fullmatch(r"0x[0-9a-fA-F]{64}", intent_id):
+        raise ValueError(
+            f"Invalid intent_id: {intent_id!r} looks like the on-chain (bytes32) id. "
+            "Pass the textual id the API returned ('pi_...'); the SDK derives the "
+            "on-chain form itself."
+        )
+    return to_hex(keccak(text=intent_id))
 
 
 def build_authorization_typed_data(
@@ -102,15 +132,31 @@ def build_authorization_typed_data(
     settlement_hub: str,
     chain: SupportedChain,
     *,
-    nonce: str | None = None,
+    intent_id: str,
     valid_after: int | None = None,
     valid_before: int | None = None,
 ) -> dict:
-    """Build the EIP-712 typed data for USDC ReceiveWithAuthorization."""
+    """
+    Construye el typed data EIP-712 de USDC `ReceiveWithAuthorization`.
+
+    `intent_id` es el id **textual** que devolvió la API (`pi_…`) y es
+    obligatorio: de él se deriva el nonce de la autorización. El contrato exige
+    esa atadura porque quien envía la transacción —el nodeit, la parte no
+    confiable— podía, con un nonce aleatorio, aplicar la firma del pagador a
+    otro intent y quedarse el pago.
+
+    Se pide el id textual y no el `bytes32` para que nadie tenga que calcular
+    el hash por su cuenta: el SDK lo deriva con `intent_id_to_bytes32`, que es
+    la misma derivación que hace el contrato.
+
+    El campo del mensaje se sigue llamando `nonce`: lo fija ERC-3009. Lo que
+    cambia es de dónde sale su valor.
+    """
     now_seconds = int(time.time())
     valid_after = valid_after if valid_after is not None else 0
     valid_before = valid_before if valid_before is not None else now_seconds + DEFAULT_VALIDITY_WINDOW_SECONDS
-    nonce = nonce if nonce is not None else generate_nonce()
+    # El nonce ES el intent: así la firma solo sirve para pagar ese intent.
+    nonce = intent_id_to_bytes32(intent_id)
 
     return {
         "domain": {
@@ -191,17 +237,23 @@ def sign_authorization(
     chain: SupportedChain,
     private_key: str,
     *,
-    nonce: str | None = None,
+    intent_id: str,
     valid_after: int | None = None,
     valid_before: int | None = None,
 ) -> SignedAuthorization:
-    """Build and sign a ReceiveWithAuthorization message."""
+    """
+    Construye y firma un mensaje `ReceiveWithAuthorization`.
+
+    `intent_id` es el id textual de la API (`pi_…`) y es obligatorio: de él se
+    deriva el nonce, así que la firma queda atada a ese intent y solo a ese,
+    para que el nodeit no pueda redirigir el cobro.
+    """
     typed_data = build_authorization_typed_data(
         payer=payer,
         amount=amount,
         settlement_hub=settlement_hub,
         chain=chain,
-        nonce=nonce,
+        intent_id=intent_id,
         valid_after=valid_after,
         valid_before=valid_before,
     )
