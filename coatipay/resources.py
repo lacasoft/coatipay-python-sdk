@@ -1,6 +1,8 @@
 """CoatiPay API resource classes."""
 from __future__ import annotations
 
+from typing import Literal
+
 import httpx
 
 from .eip712 import (
@@ -9,9 +11,20 @@ from .eip712 import (
     serialize_authorization,
     sign_authorization,
 )
-from .errors import CoatiPaySDKError
+from .errors import WebhookSignatureError, classify_error
 
 MAX_BATCH_SIZE = 50
+
+# Default tolerance for the `t=` timestamp of a webhook signature: 5 minutes.
+DEFAULT_TOLERANCE_SECONDS = 300
+
+# One per status change of a payment intent. There is no `failed` event.
+WebhookEventType = Literal[
+    "payment_intent.created",
+    "payment_intent.settled",
+    "payment_intent.expired",
+    "payment_intent.cancelled",
+]
 
 
 async def _request(client: httpx.AsyncClient, method: str, path: str, **kwargs):
@@ -19,11 +32,14 @@ async def _request(client: httpx.AsyncClient, method: str, path: str, **kwargs):
     data = response.json()
     if not response.is_success:
         err = data.get("error", {})
-        raise CoatiPaySDKError(
-            code=err.get("code", "unknown_error"),
+        code = err.get("code", "unknown_error")
+        # La clase más concreta según la categoría del código (AuthError,
+        # ValidationError…); todas heredan de CoatiPaySDKError.
+        raise classify_error(
+            code=code,
             message=err.get("message", "Unknown error"),
             param=err.get("param"),
-            doc_url=err.get("doc_url", "https://docs.coatipay.com"),
+            doc_url=err.get("doc_url", f"https://coatipay.com/docs/errors/{code}"),
         )
     return data
 
@@ -171,27 +187,87 @@ class Webhooks:
     def __init__(self, client: httpx.AsyncClient):
         self._client = client
 
-    def verify(self, payload: str, signature: str, secret: str) -> dict:
-        import hmac, hashlib, json, time
-        parts = {p.split("=")[0]: p.split("=")[1] for p in signature.split(",")}
-        ts, sig = parts.get("t", ""), parts.get("v1", "")
+    def verify(
+        self,
+        payload: str,
+        signature: str,
+        secret: str,
+        *,
+        tolerance: int = DEFAULT_TOLERANCE_SECONDS,
+        now: int | None = None,
+    ) -> dict:
+        """
+        Verify a webhook's `X-Signature` header and return the parsed event.
+        Call it with the RAW request body.
 
-        # Reject if timestamp is older than 5 minutes to prevent replay attacks
-        try:
-            ts_int = int(ts)
-        except (ValueError, TypeError):
-            raise ValueError("Invalid webhook timestamp")
-        if abs(time.time() - ts_int) > 300:
-            raise ValueError("Webhook timestamp too old")
+        The same rules in every CoatiPay SDK (shared vectors in
+        `@lacasoft/coatipay-protocol/vectors/webhooks.json`):
 
-        expected = hmac.new(
-            secret.encode(), f"{ts}.{payload}".encode(), hashlib.sha256
+        - `t=<seconds>,v1=<hex>` parts, comma-separated (spaces around them are
+          ignored). A part without `=` or without a key, a missing or repeated
+          `t`, a `t` that is not all digits, or no `v1` → `malformed_header`.
+        - `|now - t|` above `tolerance` (300 s) → `timestamp_out_of_tolerance`.
+        - Valid if ANY `v1` is the HMAC-SHA256 of `<t>.<body>` with your secret
+          (a secret can be rotated without dropping deliveries); otherwise
+          `no_matching_signature`.
+
+        Raises `WebhookSignatureError` (a `ValueError`) with the `reason`.
+        `now` (seconds) is for tests; by default, the system clock.
+        """
+        import hashlib
+        import hmac
+        import json
+        import time
+
+        ts: list[str] = []
+        firmas: list[str] = []
+        for bruta in signature.split(","):
+            parte = bruta.strip()
+            igual = parte.find("=")
+            if igual <= 0:
+                raise WebhookSignatureError("malformed_header", "Malformed webhook signature header")
+            clave, valor = parte[:igual], parte[igual + 1 :]
+            if clave == "t":
+                ts.append(valor)
+            elif clave == "v1":
+                firmas.append(valor)
+        # Los mensajes de antes se conservan donde el caso es el mismo.
+        if len(ts) == 1 and not (ts[0].isascii() and ts[0].isdigit()):
+            raise WebhookSignatureError("malformed_header", "Invalid webhook timestamp")
+        if len(ts) != 1 or not firmas:
+            raise WebhookSignatureError("malformed_header", "Malformed webhook signature header")
+
+        ahora = int(time.time()) if now is None else now
+        if abs(ahora - int(ts[0])) > tolerance:
+            raise WebhookSignatureError("timestamp_out_of_tolerance", "Webhook timestamp too old")
+
+        esperada = hmac.new(
+            secret.encode(), f"{ts[0]}.{payload}".encode(), hashlib.sha256
         ).hexdigest()
-        if not hmac.compare_digest(expected, sig):
-            raise ValueError("Webhook signature verification failed")
+        # En bytes: con dos `str`, compare_digest lanza TypeError si una firma
+        # manipulada trae caracteres no ASCII, y el handler fallaría en vez de
+        # rechazarla.
+        if not any(hmac.compare_digest(esperada.encode(), f.encode()) for f in firmas):
+            raise WebhookSignatureError(
+                "no_matching_signature", "Webhook signature verification failed"
+            )
         return json.loads(payload)
 
-    async def register(self, url: str, events: list[str]) -> dict:
+    async def register(self, url: str, events: list[WebhookEventType]) -> dict:
+        """Register an endpoint. The returned `secret` signs its deliveries and
+        is only returned here: store it."""
         return await _request(
             self._client, "POST", "/webhooks", json={"url": url, "events": events}
+        )
+
+    async def list_dead_letters(self, limit: int | None = None) -> dict:
+        """Deliveries that exhausted their retries, newest first. Secret key."""
+        params = {"limit": limit} if limit is not None else None
+        return await _request(self._client, "GET", "/webhooks/dead_letters", params=params)
+
+    async def replay_dead_letter(self, dead_letter_id: str) -> dict:
+        """Send a dead letter again: the same event, with the same id, to the
+        same endpoint, retries reset. Secret key."""
+        return await _request(
+            self._client, "POST", f"/webhooks/dead_letters/{dead_letter_id}/replay"
         )
