@@ -8,14 +8,31 @@ from .client import CoatiPay
 # deriva el SDK; que lo calcule por su cuenta es justo el error que se quiere
 # hacer imposible.
 from .eip712 import intent_id_to_bytes32
-from .errors import CoatiPayError, CoatiPaySDKError
+from .errors import (
+    AuthError,
+    CoatiPayError,
+    CoatiPaySDKError,
+    PaymentError,
+    RateLimitError,
+    RoutingError,
+    ValidationError,
+    WebhookSignatureError,
+    classify_error,
+)
 from .x402 import X402Middleware
 
 __all__ = [
+    "AuthError",
     "CoatiPay",
     "CoatiPayError",
     "CoatiPaySDKError",
+    "PaymentError",
+    "RateLimitError",
+    "RoutingError",
+    "ValidationError",
+    "WebhookSignatureError",
     "X402Middleware",
+    "classify_error",
     "intent_id_to_bytes32",
 ]
-__version__ = "0.1.1"
+__version__ = "0.1.3"

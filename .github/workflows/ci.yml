@@ -25,3 +25,20 @@ jobs:
 
       - name: Test
         run: pytest -q
+
+      # Los vectores compartidos entre los SDK: tests/vectors tiene que ser la
+      # copia de la ÚLTIMA versión publicada de @lacasoft/coatipay-protocol (los
+      # tests de arriba los pasan), y coatipay/_catalogo.py el que se genera de
+      # ella. Un vector nuevo hace fallar el CI hasta que se copie y se cumpla.
+      - name: Shared vectors (latest published protocol)
+        run: |
+          npm pack @lacasoft/coatipay-protocol@latest --pack-destination "$RUNNER_TEMP" --silent > /dev/null
+          tar -xzf "$RUNNER_TEMP"/lacasoft-coatipay-protocol-*.tgz -C "$RUNNER_TEMP"
+          for f in "$RUNNER_TEMP"/package/vectors/*.json; do
+            if ! diff -q "$f" "tests/vectors/$(basename "$f")" > /dev/null 2>&1; then
+              echo "::error::tests/vectors/$(basename "$f") no es el de la última versión del protocolo. Cópialo y vuelve a generar el catálogo (python scripts/generar_catalogo.py)."
+              exit 1
+            fi
+          done
+          python scripts/generar_catalogo.py
+          git diff --exit-code coatipay/_catalogo.py
