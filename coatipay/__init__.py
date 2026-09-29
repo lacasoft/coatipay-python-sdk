@@ -1,6 +1,6 @@
 """
 CoatiPay Python SDK
-The open payment network. No fees. No gatekeepers.
+The open payment network: USDC on Base, non-custodial, no gatekeepers.
 """
 from .client import CoatiPay
 # Se exporta desde el paquete porque quien arma la autorización a mano (con su
@@ -12,6 +12,7 @@ from .errors import (
     AuthError,
     CoatiPayError,
     CoatiPaySDKError,
+    NetworkError,
     PaymentError,
     RateLimitError,
     RoutingError,
@@ -26,6 +27,7 @@ __all__ = [
     "CoatiPay",
     "CoatiPayError",
     "CoatiPaySDKError",
+    "NetworkError",
     "PaymentError",
     "RateLimitError",
     "RoutingError",
@@ -35,4 +37,4 @@ __all__ = [
     "classify_error",
     "intent_id_to_bytes32",
 ]
-__version__ = "0.1.3"
+__version__ = "0.1.4"

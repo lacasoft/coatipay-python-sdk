@@ -6,7 +6,7 @@ import hashlib
 import json
 import time
 
-from coatipay import CoatiPay, CoatiPayError, CoatiPaySDKError, intent_id_to_bytes32
+from coatipay import CoatiPay, CoatiPayError, CoatiPaySDKError, NetworkError, intent_id_to_bytes32
 
 
 # ── Client initialization ─────────────────────────────────────────
@@ -207,7 +207,7 @@ class TestErrorHandling:
                 "code": "invalid_api_key",
                 "message": "Invalid or revoked API key.",
                 "param": None,
-                "doc_url": "https://docs.coatipay.com/errors/invalid_api_key",
+                "doc_url": "https://coatipay.com/docs/errors/invalid_api_key",
             }
         }
         mock_response = httpx.Response(401, json=error_body)
@@ -216,16 +216,20 @@ class TestErrorHandling:
             with pytest.raises(CoatiPaySDKError) as exc_info:
                 await client.payment_intents.list()
             assert exc_info.value.code == "invalid_api_key"
-            assert exc_info.value.doc_url == "https://docs.coatipay.com/errors/invalid_api_key"
+            assert exc_info.value.doc_url == "https://coatipay.com/docs/errors/invalid_api_key"
 
     @pytest.mark.asyncio
     async def test_api_error_unknown_format(self):
+        """An error without `code` is not a CoatiPay answer: NetworkError with
+        the status (vectors: errores.json, respuestas → error_sin_code)."""
         mock_response = httpx.Response(500, json={"error": {}})
         with patch.object(httpx.AsyncClient, "request", new_callable=AsyncMock, return_value=mock_response):
             client = CoatiPay(api_key="sk_live_test")
-            with pytest.raises(CoatiPaySDKError) as exc_info:
+            with pytest.raises(NetworkError) as exc_info:
                 await client.payment_intents.retrieve("pi_fail")
-            assert exc_info.value.code == "unknown_error"
+            assert exc_info.value.code == "network_error"
+            assert exc_info.value.status == 500
+            assert isinstance(exc_info.value, CoatiPaySDKError)
 
     def test_coatipay_error_is_alias(self):
         """CoatiPayError remains a backwards-compatible alias for CoatiPaySDKError."""

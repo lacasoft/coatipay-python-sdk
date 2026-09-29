@@ -11,7 +11,7 @@ from .eip712 import (
     serialize_authorization,
     sign_authorization,
 )
-from .errors import WebhookSignatureError, classify_error
+from .errors import NetworkError, WebhookSignatureError, classify_error, doc_url
 
 MAX_BATCH_SIZE = 50
 
@@ -28,20 +28,50 @@ WebhookEventType = Literal[
 
 
 async def _request(client: httpx.AsyncClient, method: str, path: str, **kwargs):
-    response = await client.request(method, f"/v1{path}", **kwargs)
-    data = response.json()
-    if not response.is_success:
-        err = data.get("error", {})
-        code = err.get("code", "unknown_error")
-        # La clase más concreta según la categoría del código (AuthError,
-        # ValidationError…); todas heredan de CoatiPaySDKError.
-        raise classify_error(
-            code=code,
-            message=err.get("message", "Unknown error"),
-            param=err.get("param"),
-            doc_url=err.get("doc_url", f"https://coatipay.com/docs/errors/{code}"),
+    # La misma regla en los tres SDK (vectores compartidos: errores.json,
+    # `respuestas`). Sin respuesta, o una que no es de CoatiPay → NetworkError.
+    try:
+        response = await client.request(method, f"/v1{path}", **kwargs)
+    except httpx.TimeoutException as e:
+        raise NetworkError(f"Request timed out: {path}") from e
+    except httpx.RequestError as e:
+        raise NetworkError(f"Network error: {path}") from e
+
+    # Un cuerpo que no es JSON no es una respuesta de CoatiPay, aunque sea un
+    # 2xx: el 502 de un proxy es HTML.
+    try:
+        data = response.json()
+    except ValueError as e:
+        raise NetworkError(
+            f"Response is not JSON (HTTP {response.status_code}): {path}",
+            status=response.status_code,
+        ) from e
+    if response.is_success:
+        return data
+
+    # Un error de CoatiPay es un objeto cuyo `error` es un objeto con `code`
+    # de texto no vacío. Lo demás (el error por defecto de Fastify, el JSON de
+    # un proxy) no lo es.
+    err = data.get("error") if isinstance(data, dict) else None
+    code = err.get("code") if isinstance(err, dict) else None
+    if not isinstance(code, str) or not code:
+        raise NetworkError(
+            f"Response is not a CoatiPay error (HTTP {response.status_code}): {path}",
+            status=response.status_code,
         )
-    return data
+    # La clase más concreta según la categoría del código (AuthError,
+    # ValidationError…); todas heredan de CoatiPaySDKError.
+    raise classify_error(
+        code=code,
+        message=_texto(err, "message") or "Unknown error",
+        param=_texto(err, "param"),
+        doc_url=_texto(err, "doc_url") or doc_url(code),
+    )
+
+
+def _texto(err: dict, clave: str) -> str | None:
+    valor = err.get(clave)
+    return valor if isinstance(valor, str) else None
 
 
 class PaymentIntents:
@@ -58,10 +88,26 @@ class PaymentIntents:
     def __init__(self, client: httpx.AsyncClient):
         self._client = client
 
-    async def create(self, amount: int, currency: str, chain: str, **kwargs) -> dict:
+    async def create(
+        self,
+        amount: int,
+        currency: str,
+        chain: str,
+        *,
+        idempotency_key: str | None = None,
+        **kwargs,
+    ) -> dict:
+        """Create a payment intent.
+
+        `idempotency_key` makes it safe to retry: the same key with the same
+        parameters returns the same intent instead of creating another one
+        (and a different amount with the same key is an
+        `idempotency_key_reused` error).
+        """
         return await _request(
             self._client, "POST", "/payment_intents",
             json={"amount": amount, "currency": currency, "chain": chain, **kwargs},
+            **({"headers": {"Idempotency-Key": idempotency_key}} if idempotency_key else {}),
         )
 
     async def retrieve(self, intent_id: str) -> dict:

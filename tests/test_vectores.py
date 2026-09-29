@@ -11,7 +11,9 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 
 import coatipay.errors as errores_sdk
@@ -22,6 +24,7 @@ from coatipay.eip712 import (
     serialize_authorization,
     sign_authorization,
 )
+from coatipay import CoatiPay
 from coatipay.resources import Webhooks
 
 DIRECTORIO = Path(os.environ.get("COATIPAY_VECTORES", Path(__file__).parent / "vectors"))
@@ -149,3 +152,28 @@ def test_error_de_cada_codigo(code):
 
 def test_error_desconocido_es_la_clase_base():
     assert type(_clase(ERRORES["desconocido"]["code"])).__name__ == ERRORES["desconocido"]["clase"]
+
+
+# ── respuestas de la API ───────────────────────────────────────────
+
+
+@pytest.mark.parametrize("caso", ERRORES["respuestas"]["casos"], ids=lambda c: c["nombre"])
+async def test_respuesta(caso):
+    r = caso["respuesta"]
+    if r is None:
+        simulado = {"side_effect": httpx.ConnectError("fallo de red")}
+    else:
+        simulado = {"return_value": httpx.Response(r["status"], content=r["cuerpo"].encode())}
+    with patch.object(httpx.AsyncClient, "request", new_callable=AsyncMock, **simulado):
+        llamada = CoatiPay(api_key="sk_test_vectores").payment_intents.retrieve("pi_vector")
+        e = caso["esperado"]
+        if e["ok"]:
+            assert await llamada == json.loads(r["cuerpo"])
+            return
+        with pytest.raises(errores_sdk.CoatiPaySDKError) as info:
+            await llamada
+    error = info.value
+    assert type(error).__name__ == e["clase"]
+    assert (error.code, error.param, error.doc_url) == (e["code"], e["param"], e["doc_url"])
+    if e["clase"] == "NetworkError":
+        assert error.status == e["status"]
