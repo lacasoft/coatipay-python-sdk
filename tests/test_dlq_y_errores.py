@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
-from coatipay import AuthError, CoatiPay, CoatiPaySDKError, RateLimitError
+from coatipay import AuthError, CoatiPay, CoatiPaySDKError, NetworkError, RateLimitError
 
 ENTREGA = {
     "id": "dlq_1",
@@ -69,3 +69,33 @@ async def test_sin_doc_url_apunta_a_la_pagina_real_del_codigo():
         with pytest.raises(CoatiPaySDKError) as info:
             await CoatiPay(api_key="sk_live_test").payment_intents.retrieve("pi_x")
     assert info.value.doc_url == "https://coatipay.com/docs/errors/intent_not_found"
+
+
+async def test_create_con_idempotency_key_la_manda_en_la_cabecera():
+    respuesta = httpx.Response(201, json={"id": "pi_1", "status": "created"})
+    with patch.object(httpx.AsyncClient, "request", new_callable=AsyncMock, return_value=respuesta) as req:
+        await CoatiPay(api_key="sk_live_test").payment_intents.create(
+            amount=1_000_000, currency="usdc", chain="base", idempotency_key="order_123"
+        )
+    _, kwargs = req.call_args
+    assert kwargs["headers"] == {"Idempotency-Key": "order_123"}
+    assert "idempotency_key" not in kwargs["json"]
+
+
+async def test_create_sin_idempotency_key_no_manda_cabecera():
+    respuesta = httpx.Response(201, json={"id": "pi_1", "status": "created"})
+    with patch.object(httpx.AsyncClient, "request", new_callable=AsyncMock, return_value=respuesta) as req:
+        await CoatiPay(api_key="sk_live_test").payment_intents.create(amount=1_000_000, currency="usdc", chain="base")
+    _, kwargs = req.call_args
+    assert "headers" not in kwargs
+
+
+async def test_timeout_es_network_error_sin_status():
+    with patch.object(
+        httpx.AsyncClient, "request", new_callable=AsyncMock, side_effect=httpx.ReadTimeout("lento")
+    ):
+        with pytest.raises(NetworkError) as info:
+            await CoatiPay(api_key="sk_live_test").payment_intents.retrieve("pi_1")
+    assert info.value.status is None
+    assert "timed out" in str(info.value)
+    assert isinstance(info.value.__cause__, httpx.ReadTimeout)

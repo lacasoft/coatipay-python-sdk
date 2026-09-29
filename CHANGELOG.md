@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.1.4 — 2026-09-29
+
+### Changed
+
+- **One rule for the API's response, shared by every CoatiPay SDK** (vectors in
+  `@lacasoft/coatipay-protocol/vectors/errores.json`, `respuestas`). Every call
+  now raises a `CoatiPaySDKError` or a subclass, never something else:
+  - No response (network, DNS, timeout) raises **`NetworkError`**
+    (`status=None`). It used to let the `httpx` exception through.
+  - A body that is not JSON — a proxy's HTML 502, an empty 503, even a 2xx —
+    raises `NetworkError` with its `status`. It used to raise
+    `json.JSONDecodeError`.
+  - An error response that is not a CoatiPay error (no `error.code`, such as
+    Fastify's default error with `error` as a string) raises `NetworkError`.
+    It used to raise `AttributeError`, or a `CoatiPaySDKError` with code
+    `unknown_error` when `error` was an object without `code`.
+- `NetworkError` is a `CoatiPaySDKError` with code `network_error`; the
+  original exception is its `__cause__`.
+
+### Added
+
+- **`payment_intents.create(..., idempotency_key=...)`**, sent as the
+  `Idempotency-Key` header: the same key with the same parameters returns the
+  same intent, so a create can be retried after a `NetworkError`. Only the JS
+  SDK had it; passing it before put it in the body.
+- `NetworkError` and `coatipay.errors.doc_url(code)`.
+
+### Fixed
+
+- The package docstring said "No fees": the protocol fee is 1.5%.
+- `uv.lock` recorded version 0.1.1.
+
+### Docs
+
+- README: error handling, `idempotency_key`, webhook failure reasons, the dead-
+  letter queue, and how to change a webhook secret today (the API does not
+  rotate secrets yet).
+
 ## 0.1.3 — 2026-09-28
 
 ### Fixed

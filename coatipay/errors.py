@@ -7,10 +7,11 @@ from ._catalogo import CATEGORIAS
 
 
 class CoatiPaySDKError(Exception):
-    """Raised when the CoatiPay API returns an error.
+    """Everything an API call raises: the API's errors, and `NetworkError`
+    when there was no CoatiPay answer. One `except` covers them all.
 
-    Every error carries the catalog `code`, the API `message`, the failing
-    field in `param` (when there is one) and its reference page in `doc_url`.
+    Every error carries the `code`, the `message`, the failing field in
+    `param` (when there is one) and its reference page in `doc_url`.
     """
 
     def __init__(self, code: str, message: str, param: str | None, doc_url: str):
@@ -42,6 +43,30 @@ class PaymentError(CoatiPaySDKError):
 
 class RateLimitError(CoatiPaySDKError):
     """Too many requests. Wait before retrying (the response carries `Retry-After`)."""
+
+
+def doc_url(code: str) -> str:
+    """The reference page of an error code."""
+    return f"https://coatipay.com/docs/errors/{code}"
+
+
+class NetworkError(CoatiPaySDKError):
+    """The request got no CoatiPay answer: no response at all (network, DNS,
+    timeout: `status` is None), or a response that is not a CoatiPay error (a
+    proxy's HTML 502, a body that is not JSON: `status` is its HTTP status).
+
+    Whether the request took effect is unknown: before retrying a write, check
+    (or create with the same `idempotency_key`). Code `network_error`, set by
+    the SDK, never sent by the API. Same rule as the JS and PHP SDKs (shared
+    vectors: `errores.json`, `respuestas`). The original exception, if any, is
+    the `__cause__`.
+    """
+
+    def __init__(self, message: str, status: int | None = None):
+        super().__init__(
+            code="network_error", message=message, param=None, doc_url=doc_url("network_error")
+        )
+        self.status = status
 
 
 _CLASES: dict[str, type[CoatiPaySDKError]] = {
