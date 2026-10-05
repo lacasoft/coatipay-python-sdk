@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.1.5 — 2026-10-06
+
+### Added
+
+- **`webhooks.rotate_secret(endpoint_id, keep_previous_for=...)`**: rotates an
+  endpoint's signing secret (`POST /v1/webhooks/:id/rotate_secret`) and returns
+  the new one, once. The previous secret keeps signing next to it for
+  `keep_previous_for` seconds — 24 h by default, up to 7 days — and `verify`
+  accepts either, so the secret can be changed without dropping a delivery.
+  `keep_previous_for=0` retires the previous secret at once, for one that
+  leaked.
+
+### Fixed
+
+- **`payment_intents.cancel` and `webhooks.replay_dead_letter` never reached
+  the API.** The client declared `Content-Type: application/json` on every
+  request, and the API rejects a POST that declares JSON and arrives empty
+  (400 `invalid_request`, "Body cannot be empty when content-type is set to
+  'application/json'"). The header is now only sent with a body. Found by
+  running the SDK against a real API; the tests mocked the request before its
+  headers were built.
+
+### Docs
+
+- README: rotating a webhook secret. The workaround of registering a second
+  endpoint is no longer needed.
+
 ## 0.1.4 — 2026-09-29
 
 ### Changed

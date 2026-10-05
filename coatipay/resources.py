@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Literal
+from urllib.parse import quote
 
 import httpx
 
@@ -304,6 +305,34 @@ class Webhooks:
         is only returned here: store it."""
         return await _request(
             self._client, "POST", "/webhooks", json={"url": url, "events": events}
+        )
+
+    async def rotate_secret(
+        self, endpoint_id: str, *, keep_previous_for: int | None = None
+    ) -> dict:
+        """Rotate an endpoint's signing secret. The new `secret` is only
+        returned here: store it. Secret key.
+
+        The previous secret keeps signing next to the new one for
+        `keep_previous_for` seconds — 24 h by default, up to 7 days. Meanwhile
+        every delivery carries two `v1` signatures and `verify` accepts either,
+        so you can change the secret on your server without dropping a
+        delivery. With `keep_previous_for=0` the previous secret stops signing
+        at once: for one that leaked. Only two secrets ever coexist: rotating
+        again within the window retires the oldest.
+
+        Returns `id`, `url`, `events`, `secret` and
+        `previous_secret_expires_at` (seconds, or `None` if the previous secret
+        no longer signs)."""
+        # Sin plazo no se manda cuerpo: lo pone la API.
+        cuerpo = (
+            {} if keep_previous_for is None else {"json": {"keep_previous_for": keep_previous_for}}
+        )
+        return await _request(
+            self._client,
+            "POST",
+            f"/webhooks/{quote(endpoint_id, safe='')}/rotate_secret",
+            **cuerpo,
         )
 
     async def list_dead_letters(self, limit: int | None = None) -> dict:

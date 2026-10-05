@@ -37,4 +37,4 @@ __all__ = [
     "classify_error",
     "intent_id_to_bytes32",
 ]
-__version__ = "0.1.4"
+__version__ = "0.1.5"
