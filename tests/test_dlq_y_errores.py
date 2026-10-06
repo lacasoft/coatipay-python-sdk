@@ -43,6 +43,115 @@ async def test_replay_dead_letter_pide_post():
     assert r["replayed_at"] == 1_790_000_100
 
 
+ROTADO = {
+    "id": "we_1",
+    "url": "https://example.com/hook",
+    "events": ["payment_intent.settled"],
+    "secret": "whsec_nuevo",
+    "previous_secret_expires_at": 1_790_086_400,
+}
+
+
+async def test_rotate_secret_pide_post_sin_cuerpo_el_plazo_lo_pone_la_api():
+    respuesta = httpx.Response(200, json=ROTADO)
+    with patch.object(httpx.AsyncClient, "request", new_callable=AsyncMock, return_value=respuesta) as req:
+        r = await CoatiPay(api_key="sk_live_test").webhooks.rotate_secret("we_1")
+    args, kwargs = req.call_args
+    assert args == ("POST", "/v1/webhooks/we_1/rotate_secret")
+    assert kwargs == {}
+    assert r == ROTADO
+
+
+@pytest.mark.parametrize("plazo", [0, 3600])
+async def test_rotate_secret_manda_keep_previous_for_tambien_cuando_es_cero(plazo):
+    respuesta = httpx.Response(200, json={**ROTADO, "previous_secret_expires_at": None})
+    with patch.object(httpx.AsyncClient, "request", new_callable=AsyncMock, return_value=respuesta) as req:
+        r = await CoatiPay(api_key="sk_live_test").webhooks.rotate_secret(
+            "we_1", keep_previous_for=plazo
+        )
+    _, kwargs = req.call_args
+    assert kwargs == {"json": {"keep_previous_for": plazo}}
+    assert r["previous_secret_expires_at"] is None
+
+
+async def test_rotate_secret_escapa_el_id_en_la_ruta():
+    respuesta = httpx.Response(200, json=ROTADO)
+    with patch.object(httpx.AsyncClient, "request", new_callable=AsyncMock, return_value=respuesta) as req:
+        await CoatiPay(api_key="sk_live_test").webhooks.rotate_secret("we_1/../otra")
+    args, _ = req.call_args
+    assert args == ("POST", "/v1/webhooks/we_1%2F..%2Fotra/rotate_secret")
+
+
+def test_durante_la_ventana_verify_acepta_el_secreto_nuevo_y_el_anterior():
+    import hashlib
+    import hmac
+    import json
+    import time
+
+    from coatipay import WebhookSignatureError
+
+    payload = json.dumps({"id": "evt_r", "type": "payment_intent.settled", "data": {}})
+    t = int(time.time())
+
+    def firma(secreto: str) -> str:
+        return hmac.new(secreto.encode(), f"{t}.{payload}".encode(), hashlib.sha256).hexdigest()
+
+    # Como la manda la API tras rotar: primero la del nuevo, después la del anterior.
+    cabecera = f"t={t},v1={firma('whsec_nuevo')},v1={firma('whsec_anterior')}"
+    webhooks = CoatiPay(api_key="sk_live_test").webhooks
+    assert webhooks.verify(payload, cabecera, "whsec_nuevo")["id"] == "evt_r"
+    assert webhooks.verify(payload, cabecera, "whsec_anterior")["id"] == "evt_r"
+    with pytest.raises(WebhookSignatureError) as info:
+        webhooks.verify(payload, cabecera, "whsec_otro")
+    assert info.value.reason == "no_matching_signature"
+
+
+async def _peticion_que_sale(llamada) -> httpx.Request:
+    """La petición tal como la arma el cliente del SDK, con sus cabeceras por
+    defecto: lo que de verdad llega a la API. Simular `request` no lo enseña."""
+    salieron: list[httpx.Request] = []
+
+    async def send(self, request, **kwargs):
+        salieron.append(request)
+        return httpx.Response(200, json={}, request=request)
+
+    with patch.object(httpx.AsyncClient, "send", new=send):
+        await llamada(CoatiPay(api_key="sk_live_test"))
+    return salieron[0]
+
+
+@pytest.mark.parametrize(
+    "llamada",
+    [
+        lambda relay: relay.payment_intents.cancel("pi_1"),
+        lambda relay: relay.webhooks.replay_dead_letter("dlq_1"),
+        lambda relay: relay.webhooks.rotate_secret("we_1"),
+    ],
+    ids=["cancel", "replay_dead_letter", "rotate_secret"],
+)
+async def test_un_post_sin_cuerpo_no_declara_json(llamada):
+    # La API rechaza con 400 un POST que declara JSON y llega vacío.
+    peticion = await _peticion_que_sale(llamada)
+    assert peticion.method == "POST"
+    assert peticion.content == b""
+    assert "content-type" not in peticion.headers
+    assert peticion.headers["authorization"] == "Bearer sk_live_test"
+
+
+@pytest.mark.parametrize(
+    "llamada",
+    [
+        lambda relay: relay.webhooks.register("https://example.com/h", ["payment_intent.settled"]),
+        lambda relay: relay.webhooks.rotate_secret("we_1", keep_previous_for=0),
+    ],
+    ids=["register", "rotate_secret con plazo"],
+)
+async def test_un_post_con_cuerpo_si_declara_json(llamada):
+    peticion = await _peticion_que_sale(llamada)
+    assert peticion.headers["content-type"] == "application/json"
+    assert peticion.content != b""
+
+
 def _error(status: int, code: str, doc_url: str | None = None) -> httpx.Response:
     error = {"code": code, "message": "m", "param": None}
     if doc_url is not None:

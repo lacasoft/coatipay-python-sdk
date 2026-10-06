@@ -30,9 +30,12 @@ class CoatiPay:
         self._merchant_wallet = merchant_wallet
         self._client = httpx.AsyncClient(
             base_url=base_url or self.BASE_URL,
+            # Sin `Content-Type` por defecto: httpx lo pone cuando hay cuerpo
+            # JSON. Declararlo en un POST sin cuerpo (cancel, replay) hace que
+            # la API lo rechace: «Body cannot be empty when content-type is set
+            # to 'application/json'».
             headers={
                 "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
                 "CoatiPay-Version": "0.1",
             },
             timeout=timeout,
