@@ -7,7 +7,7 @@ from .client import CoatiPay
 # propia wallet, sin pasar por `sign_authorization`) necesita el mismo nonce que
 # deriva el SDK; que lo calcule por su cuenta es justo el error que se quiere
 # hacer imposible.
-from .eip712 import intent_id_to_bytes32
+from .eip712 import intent_id_of, intent_ref
 from .errors import (
     AuthError,
     CoatiPayError,
@@ -35,6 +35,7 @@ __all__ = [
     "WebhookSignatureError",
     "X402Middleware",
     "classify_error",
-    "intent_id_to_bytes32",
+    "intent_id_of",
+    "intent_ref",
 ]
-__version__ = "0.1.5"
+__version__ = "0.2.0"

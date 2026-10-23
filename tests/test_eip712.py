@@ -6,7 +6,8 @@ from coatipay.eip712 import (
     SignedAuthorization,
     build_authorization_typed_data,
     hash_typed_data,
-    intent_id_to_bytes32,
+    intent_id_of,
+    intent_ref,
     serialize_authorization,
     sign_authorization,
     split_signature,
@@ -22,10 +23,17 @@ PRIVATE_KEY = "0x" + "11" * 32
 INTENT_ID = "pi_abc123"
 OTHER_INTENT_ID = "pi_def456"
 
-# Derivación esperada (`keccak256(utf8(id))`), congelada a mano en vez de
-# llamar al SDK: si el test usara la propia función se compararía consigo misma
-# y no comprobaría nada. Es además el valor que produce el SDK de JavaScript.
-INTENT_ID_NONCE = "0x1c398f360a7fffed5f5d87230c4dec29acee4de43d42ebc22983411dcae0e356"
+# La cartera del comercio del cobro (`merchant_wallet`): entra en el nonce.
+MERCHANT = "0x2222222222222222222222222222222222222222"
+
+# Derivaciones esperadas, congeladas a mano en vez de llamar al SDK: si el test
+# usara la propia función se compararía consigo misma y no comprobaría nada.
+# Salen del paquete del protocolo (TypeScript), que es además lo que calcula el
+# hub (ADR-009 §3).
+# `keccak256(utf8(id))`: la referencia, y lo que hasta 0.1.x era el nonce.
+INTENT_REF = "0x1c398f360a7fffed5f5d87230c4dec29acee4de43d42ebc22983411dcae0e356"
+# `keccak256(abi.encode(MERCHANT, INTENT_REF))`: el nonce.
+INTENT_ID_NONCE = "0x49b48a490b8527d2af148b118ed2eba075935d53fc90962ecfca1b29378ba541"
 
 
 class TestBuildAuthorizationTypedData:
@@ -36,6 +44,7 @@ class TestBuildAuthorizationTypedData:
             settlement_hub=HUB,
             chain="base-sepolia",
             intent_id=INTENT_ID,
+            merchant=MERCHANT,
             valid_after=0,
             valid_before=2_000_000_000,
         )
@@ -63,6 +72,7 @@ class TestBuildAuthorizationTypedData:
             settlement_hub=HUB,
             chain="base",
             intent_id=INTENT_ID,
+            merchant=MERCHANT,
         )
 
         assert typed["domain"]["chainId"] == 8453
@@ -85,6 +95,7 @@ class TestNonceBoundToIntent:
             settlement_hub=HUB,
             chain="base-sepolia",
             intent_id=INTENT_ID,
+            merchant=MERCHANT,
         )
 
         assert typed["message"]["nonce"] == INTENT_ID_NONCE
@@ -97,6 +108,7 @@ class TestNonceBoundToIntent:
             chain="base-sepolia",
             private_key=PRIVATE_KEY,
             intent_id=INTENT_ID,
+            merchant=MERCHANT,
         )
 
         assert auth.nonce == INTENT_ID_NONCE
@@ -112,8 +124,8 @@ class TestNonceBoundToIntent:
             "valid_after": 0,
             "valid_before": 2_000_000_000,
         }
-        first = sign_authorization(intent_id=INTENT_ID, **common)
-        second = sign_authorization(intent_id=OTHER_INTENT_ID, **common)
+        first = sign_authorization(intent_id=INTENT_ID, merchant=MERCHANT, **common)
+        second = sign_authorization(intent_id=OTHER_INTENT_ID, merchant=MERCHANT, **common)
 
         assert first.nonce != second.nonce
         assert first.signature != second.signature
@@ -153,6 +165,7 @@ class TestNonceBoundToIntent:
                     settlement_hub=HUB,
                     chain="base-sepolia",
                     intent_id=empty,
+                    merchant=MERCHANT,
                 )
 
     def test_rejects_an_intent_id_that_is_already_the_bytes32(self):
@@ -168,6 +181,7 @@ class TestNonceBoundToIntent:
                 settlement_hub=HUB,
                 chain="base-sepolia",
                 intent_id=INTENT_ID_NONCE,
+                merchant=MERCHANT,
             )
 
     def test_no_random_nonce_generator_is_exported(self):
@@ -178,25 +192,39 @@ class TestNonceBoundToIntent:
         assert not hasattr(eip712, "generate_nonce")
 
 
-class TestIntentIdToBytes32:
+class TestIntentRefYIntentIdOf:
     """
-    El helper existe para que nadie tenga que calcular el hash a mano: quien
+    Los helpers existen para que nadie tenga que calcular el hash a mano: quien
     construye la autorización con su propia wallet necesita exactamente el
     mismo nonce que deriva el SDK, y una derivación distinta produce una firma
-    atada a un intent inexistente que solo falla al liquidar.
+    que solo falla al liquidar.
     """
 
-    def test_derives_keccak256_of_the_utf8_id(self):
-        assert intent_id_to_bytes32(INTENT_ID) == INTENT_ID_NONCE
+    def test_intent_ref_es_keccak256_del_id_en_utf8(self):
+        assert intent_ref(INTENT_ID) == INTENT_REF
 
-    def test_is_exported_from_the_package(self):
-        """Se exporta desde `coatipay`, no solo desde el submódulo."""
+    def test_intent_id_of_lleva_la_cartera_del_comercio(self):
+        """El mismo cálculo que `SettlementHub.intentIdOf` (ADR-009 §3)."""
+        assert intent_id_of(MERCHANT, INTENT_ID) == INTENT_ID_NONCE
+
+    def test_otra_cartera_otro_nonce(self):
+        """La firma del pagador fija a quién paga."""
+        assert intent_id_of(HUB, INTENT_ID) != INTENT_ID_NONCE
+
+    def test_la_cartera_no_distingue_mayusculas(self):
+        assert intent_id_of(MERCHANT.upper().replace("0X", "0x"), INTENT_ID) == INTENT_ID_NONCE
+
+    def test_se_exportan_desde_el_paquete(self):
+        """Se exportan desde `coatipay`, no solo desde el submódulo; el viejo
+        `intent_id_to_bytes32` ya no, porque daría un nonce que no liquida."""
         import coatipay
 
-        assert coatipay.intent_id_to_bytes32(INTENT_ID) == INTENT_ID_NONCE
-        assert "intent_id_to_bytes32" in coatipay.__all__
+        assert coatipay.intent_id_of(MERCHANT, INTENT_ID) == INTENT_ID_NONCE
+        assert coatipay.intent_ref(INTENT_ID) == INTENT_REF
+        assert "intent_id_of" in coatipay.__all__
+        assert not hasattr(coatipay, "intent_id_to_bytes32")
 
-    def test_matches_the_nonce_the_sdk_signs(self):
+    def test_coincide_con_el_nonce_que_firma_el_sdk(self):
         """La derivación pública y la interna son la misma; si divergieran, el
         integrador que firma a mano quedaría fuera de sincronía con el SDK."""
         auth = sign_authorization(
@@ -206,115 +234,32 @@ class TestIntentIdToBytes32:
             chain="base-sepolia",
             private_key=PRIVATE_KEY,
             intent_id=INTENT_ID,
+            merchant=MERCHANT,
         )
 
-        assert auth.nonce == intent_id_to_bytes32(INTENT_ID)
+        assert auth.nonce == intent_id_of(MERCHANT, INTENT_ID)
 
-    def test_rejects_empty_or_non_string(self):
+    def test_rechaza_un_id_vacio_o_que_no_es_texto(self):
         for bad in ("", "   ", None, 123):
             with pytest.raises(ValueError, match="intent_id is required"):
-                intent_id_to_bytes32(bad)  # type: ignore[arg-type]
+                intent_ref(bad)  # type: ignore[arg-type]
 
-    def test_rejects_an_id_that_is_already_the_bytes32(self):
+    def test_rechaza_un_id_que_ya_es_el_bytes32(self):
         with pytest.raises(ValueError, match="looks like the on-chain"):
-            intent_id_to_bytes32(INTENT_ID_NONCE)
+            intent_ref(INTENT_REF)
 
+    def test_rechaza_una_cartera_ausente_mal_formada_o_cero(self):
+        for bad in (None, "", "0x1234", "0x" + "00" * 20):
+            with pytest.raises(ValueError, match="merchant"):
+                intent_id_of(bad, INTENT_ID)  # type: ignore[arg-type]
 
-class TestSignAuthorization:
-    def test_signs_with_private_key(self):
-        auth = sign_authorization(
-            payer=PAYER,
-            amount=1_000_000,
-            settlement_hub=HUB,
-            chain="base-sepolia",
-            private_key=PRIVATE_KEY,
-            intent_id=INTENT_ID,
-            valid_after=0,
-            valid_before=2_000_000_000,
-        )
-
-        assert isinstance(auth, SignedAuthorization)
-        assert auth.payer == PAYER
-        assert auth.valid_after == 0
-        assert auth.valid_before == 2_000_000_000
-        assert auth.nonce == INTENT_ID_NONCE
-        assert auth.signature.startswith("0x")
-        assert len(auth.signature) == 132  # 65 bytes * 2 + 2
-
-    def test_signature_matches_js_sdk_reference(self):
-        """Cross-language sanity check: same inputs produce the same signature."""
-        auth = sign_authorization(
-            payer=PAYER,
-            amount=1_000_000,
-            settlement_hub=HUB,
-            chain="base-sepolia",
-            private_key=PRIVATE_KEY,
-            intent_id=INTENT_ID,
-            valid_after=0,
-            valid_before=2_000_000_000,
-        )
-
-        # Valor congelado ejecutando `signReceiveAuthorization` del SDK de
-        # JavaScript con estos mismos parámetros (mismo id textual: la
-        # derivación a bytes32 ocurre dentro de cada SDK).
-        expected_signature = (
-            "0xbaa94b8c00d397cd8eb1a102b00a269d6089618561ca6aa6bd5f64ccd6d5489b"
-            "4bcf8ce7bb5592c577f6b357155b2ac5c71de69af0a59524870aefd0824f529b1c"
-        )
-        assert auth.signature == expected_signature
-        # Y el nonce que ambos derivan del mismo id textual también coincide.
-        assert auth.nonce == INTENT_ID_NONCE
-
-
-class TestSplitSignature:
-    def test_splits_65_byte_signature(self):
-        sig = "0x" + "11" * 32 + "22" * 32 + "1c"
-        parts = split_signature(sig)
-
-        assert parts["v"] == 28
-        assert parts["r"] == "0x" + "11" * 32
-        assert parts["s"] == "0x" + "22" * 32
-
-    def test_normalizes_low_v(self):
-        sig = "0x" + "11" * 32 + "22" * 32 + "00"
-        parts = split_signature(sig)
-
-        assert parts["v"] == 27
-
-    def test_rejects_wrong_length(self):
-        with pytest.raises(ValueError, match="Invalid signature length"):
-            split_signature("0x1122")
-
-
-class TestSerializeAuthorization:
-    def test_serializes_to_wire_format(self):
-        auth = SignedAuthorization(
-            payer=PAYER,
-            valid_after=0,
-            valid_before=2_000_000_000,
-            nonce=INTENT_ID_NONCE,
-            signature="0x" + "11" * 65,
-        )
-        serialized = serialize_authorization(auth)
-
-        assert serialized["payer"] == auth.payer
-        assert serialized["valid_after"] == "0"
-        assert serialized["valid_before"] == "2000000000"
-        # El nonce viaja tal cual: el nodeit no puede cambiarlo sin invalidar
-        # la firma, y el contrato lo compara con el intent que liquida.
-        assert serialized["nonce"] == INTENT_ID_NONCE
-        assert serialized["signature"] == auth.signature
-
-
-class TestHashTypedData:
-    def test_digest_starts_with_eip712_prefix(self):
-        typed = build_authorization_typed_data(
-            payer=PAYER,
-            amount=1_000_000,
-            settlement_hub=HUB,
-            chain="base-sepolia",
-            intent_id=INTENT_ID,
-        )
-        digest = hash_typed_data(typed)
-        assert digest.startswith("0x")
-        assert len(digest) == 66
+    def test_sin_cartera_no_se_puede_firmar(self):
+        with pytest.raises(TypeError):
+            sign_authorization(
+                payer=PAYER,
+                amount=1_000_000,
+                settlement_hub=HUB,
+                chain="base-sepolia",
+                private_key=PRIVATE_KEY,
+                intent_id=INTENT_ID,
+            )

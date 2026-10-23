@@ -96,14 +96,11 @@ def _encode_abi(types: list[str], values: list) -> bytes:
     return b"".join(parts)
 
 
-def intent_id_to_bytes32(intent_id: str) -> str:
+def intent_ref(intent_id: str) -> str:
     """
-    Identificador on-chain de un intent, a partir del `pi_…` que devuelve la API.
-
-    Es `keccak256(utf8(id))`, la misma derivación que usan el contrato y el
-    daemon. Es pública porque quien construya la autorización a mano necesita
-    exactamente este valor: calcularlo por su cuenta y equivocarse produce una
-    firma atada a un intent que no existe, y ese fallo solo aparece al liquidar.
+    La referencia de un intent: `keccak256(utf8(id))` del `pi_…` que devuelve la
+    API. Hasta 0.1.x era el identificador on-chain entero; desde 0.2.0 (ADR-009)
+    es la mitad: ver `intent_id_of`.
 
     De lo que se puede comprobar de verdad, se comprueba: que llegue un texto
     no vacío, y que no sea un valor ya hasheado. Lo segundo importa porque es
@@ -126,6 +123,26 @@ def intent_id_to_bytes32(intent_id: str) -> str:
     return to_hex(keccak(text=intent_id))
 
 
+def intent_id_of(merchant: str, intent_id: str) -> str:
+    """
+    Identificador on-chain de un intent, que es también el nonce de la
+    autorización: `keccak256(abi.encode(merchant, intent_ref(id)))`, lo mismo
+    que `SettlementHub.intentIdOf` (ADR-009 §3). Lleva dentro la cartera del
+    comercio, así que la firma del pagador fija también a quién paga.
+
+    `merchant` es el `merchant_wallet` del PaymentIntent. Es pública porque
+    quien construya la autorización a mano necesita exactamente este valor:
+    calcularlo por su cuenta y equivocarse produce una firma que no liquida.
+    """
+    if not isinstance(merchant, str) or not _is_address(merchant):
+        raise ValueError(
+            f"merchant must be the payment's merchant_wallet (an address); got {merchant!r}"
+        )
+    if int(merchant, 16) == 0:
+        raise ValueError("merchant must not be the zero address")
+    return to_hex(keccak(_encode_abi(["address", "bytes32"], [merchant, intent_ref(intent_id)])))
+
+
 def build_authorization_typed_data(
     payer: str,
     amount: int,
@@ -133,6 +150,7 @@ def build_authorization_typed_data(
     chain: SupportedChain,
     *,
     intent_id: str,
+    merchant: str,
     valid_after: int | None = None,
     valid_before: int | None = None,
 ) -> dict:
@@ -145,9 +163,13 @@ def build_authorization_typed_data(
     confiable— podía, con un nonce aleatorio, aplicar la firma del pagador a
     otro intent y quedarse el pago.
 
+    `merchant` es el `merchant_wallet` del PaymentIntent, también obligatorio:
+    el nonce lleva dentro la cartera del comercio (ADR-009), así que la firma
+    solo sirve para pagar a esa cartera.
+
     Se pide el id textual y no el `bytes32` para que nadie tenga que calcular
-    el hash por su cuenta: el SDK lo deriva con `intent_id_to_bytes32`, que es
-    la misma derivación que hace el contrato.
+    el hash por su cuenta: el SDK lo deriva con `intent_id_of`, que es la misma
+    derivación que hace el contrato.
 
     El campo del mensaje se sigue llamando `nonce`: lo fija ERC-3009. Lo que
     cambia es de dónde sale su valor.
@@ -155,8 +177,9 @@ def build_authorization_typed_data(
     now_seconds = int(time.time())
     valid_after = valid_after if valid_after is not None else 0
     valid_before = valid_before if valid_before is not None else now_seconds + DEFAULT_VALIDITY_WINDOW_SECONDS
-    # El nonce ES el intent: así la firma solo sirve para pagar ese intent.
-    nonce = intent_id_to_bytes32(intent_id)
+    # El nonce ES el intent, con la cartera del comercio dentro: así la firma
+    # solo sirve para pagar ese intent, a esa cartera.
+    nonce = intent_id_of(merchant, intent_id)
 
     return {
         "domain": {
@@ -238,6 +261,7 @@ def sign_authorization(
     private_key: str,
     *,
     intent_id: str,
+    merchant: str,
     valid_after: int | None = None,
     valid_before: int | None = None,
 ) -> SignedAuthorization:
@@ -254,6 +278,7 @@ def sign_authorization(
         settlement_hub=settlement_hub,
         chain=chain,
         intent_id=intent_id,
+        merchant=merchant,
         valid_after=valid_after,
         valid_before=valid_before,
     )

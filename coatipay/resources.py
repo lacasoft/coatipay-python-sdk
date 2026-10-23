@@ -133,6 +133,7 @@ class PaymentIntents:
         chain: str,
         *,
         intent_id: str,
+        merchant: str,
         valid_after: int | None = None,
         valid_before: int | None = None,
     ) -> dict:
@@ -142,7 +143,8 @@ class PaymentIntents:
         `intent_id` es el mismo id textual (`pi_...`) que devuelve la API y
         que reciben `submit_authorization` / `submit_authorization_batch`: de
         él se deriva el nonce de la autorización. Nadie tiene que calcular el
-        hash on-chain a mano.
+        hash on-chain a mano. `merchant` es el `merchant_wallet` del cobro:
+        el nonce lo lleva dentro (ADR-009).
         """
         return build_authorization_typed_data(
             payer=payer,
@@ -150,6 +152,7 @@ class PaymentIntents:
             settlement_hub=settlement_hub,
             chain=chain,  # type: ignore[arg-type]
             intent_id=intent_id,
+            merchant=merchant,
             valid_after=valid_after,
             valid_before=valid_before,
         )
@@ -163,6 +166,7 @@ class PaymentIntents:
         private_key: str,
         *,
         intent_id: str,
+        merchant: str,
         valid_after: int | None = None,
         valid_before: int | None = None,
     ) -> SignedAuthorization:
@@ -171,6 +175,8 @@ class PaymentIntents:
 
         El nonce se deriva del `intent_id` textual (`pi_...`), así que la
         firma solo sirve para pagar ese intent: el nodeit no puede redirigirla.
+        `merchant` es el `merchant_wallet` del cobro: el nonce lo lleva dentro
+        (ADR-009), así que la firma solo paga a esa cartera.
         """
         return sign_authorization(
             payer=payer,
@@ -179,6 +185,7 @@ class PaymentIntents:
             chain=chain,  # type: ignore[arg-type]
             private_key=private_key,
             intent_id=intent_id,
+            merchant=merchant,
             valid_after=valid_after,
             valid_before=valid_before,
         )
