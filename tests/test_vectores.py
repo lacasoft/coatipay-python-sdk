@@ -20,7 +20,8 @@ import coatipay.errors as errores_sdk
 from coatipay.eip712 import (
     build_authorization_typed_data,
     hash_typed_data,
-    intent_id_to_bytes32,
+    intent_id_of,
+    intent_ref,
     serialize_authorization,
     sign_authorization,
 )
@@ -39,15 +40,18 @@ def vector(nombre: str) -> dict:
 NONCE = vector("nonce.json")
 
 
-@pytest.mark.parametrize("caso", NONCE["casos"], ids=lambda c: repr(c["intent_id"]))
+@pytest.mark.parametrize(
+    "caso", NONCE["casos"], ids=lambda c: f"{c['intent_id']!r}-{c['merchant']}"
+)
 def test_nonce(caso):
-    assert intent_id_to_bytes32(caso["intent_id"]) == caso["nonce"]
+    assert intent_ref(caso["intent_id"]) == caso["ref"]
+    assert intent_id_of(caso["merchant"], caso["intent_id"]) == caso["nonce"]
 
 
 @pytest.mark.parametrize("caso", NONCE["rechazados"], ids=lambda c: c["motivo"])
 def test_nonce_rechazado(caso):
     with pytest.raises(ValueError):
-        intent_id_to_bytes32(caso["intent_id"])
+        intent_id_of(caso["merchant"], caso["intent_id"])
 
 
 # ── autorización ERC-3009 ──────────────────────────────────────────
@@ -63,6 +67,7 @@ def _params(caso: dict) -> dict:
         "settlement_hub": e["settlement_hub"],
         "chain": e["chain"],
         "intent_id": e["intent_id"],
+        "merchant": e["merchant"],
         "valid_after": int(e["valid_after"]),
         "valid_before": int(e["valid_before"]),
     }

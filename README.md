@@ -66,6 +66,7 @@ auth = sign_authorization(
     chain="base",
     private_key="0x...",                      # payer private key — server-side demo only
     intent_id=intent["id"],                   # "pi_…" — the nonce is derived from it
+    merchant=intent["merchant_wallet"],       # …and from the merchant's wallet (ADR-009)
 )
 
 await relay.payment_intents.submit_authorization(intent["id"], auth)
@@ -79,9 +80,11 @@ data, for instance — derive the nonce with the same helper the SDK uses, so bo
 sides agree on the value the contract checks:
 
 ```python
-from coatipay import intent_id_to_bytes32
+from coatipay import intent_id_of
 
-nonce = intent_id_to_bytes32(intent["id"])  # keccak256(utf8("pi_…"))
+# keccak256(abi.encode(merchant_wallet, keccak256(utf8("pi_…")))), the same as
+# SettlementHub.intentIdOf: the signature fixes who gets paid.
+nonce = intent_id_of(intent["merchant_wallet"], intent["id"])
 ```
 
 ## x402 micropayments

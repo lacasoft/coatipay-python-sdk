@@ -6,7 +6,7 @@ import hashlib
 import json
 import time
 
-from coatipay import CoatiPay, CoatiPayError, CoatiPaySDKError, NetworkError, intent_id_to_bytes32
+from coatipay import CoatiPay, CoatiPayError, CoatiPaySDKError, NetworkError, intent_id_of
 
 
 # ── Client initialization ─────────────────────────────────────────
@@ -153,9 +153,9 @@ class TestPaymentIntentsList:
 # ── PaymentIntents.submit_authorization (ERC-3009) ─────────────────
 
 # El id del intent es texto (`pi_...`); lo que viaja como nonce es su
-# identificador on-chain, derivado por el SDK.
+# identificador on-chain, derivado por el SDK con la cartera del comercio.
 INTENT_ID = "pi_abc"
-INTENT_NONCE = intent_id_to_bytes32(INTENT_ID)
+INTENT_NONCE = intent_id_of("0x2222222222222222222222222222222222222222", INTENT_ID)
 
 
 class TestSubmitAuthorization:
