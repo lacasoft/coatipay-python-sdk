@@ -1,6 +1,7 @@
 """CoatiPay API resource classes."""
 from __future__ import annotations
 
+import re
 from typing import Literal
 from urllib.parse import quote
 
@@ -15,6 +16,27 @@ from .eip712 import (
 from .errors import NetworkError, WebhookSignatureError, classify_error, doc_url
 
 MAX_BATCH_SIZE = 50
+
+# La forma del id de un cobro que da la API: `pi_` y después letras ASCII,
+# dígitos, `_` o `-`, y nada más. La misma regla en los tres SDK (vectores
+# compartidos, `ids.json`; en el protocolo, `PAYMENT_INTENT_ID_PATTERN`).
+PAYMENT_INTENT_ID_PATTERN = r"^pi_[A-Za-z0-9_-]+$"
+_FORMA_DEL_ID_DE_COBRO = re.compile(PAYMENT_INTENT_ID_PATTERN)
+
+
+def is_payment_intent_id(value: object) -> bool:
+    """¿Tiene `value` la forma de un id de cobro (`pi_…`)?"""
+    # fullmatch y no match: con `re.match`, `$` acepta un salto de línea final.
+    return isinstance(value, str) and _FORMA_DEL_ID_DE_COBRO.fullmatch(value) is not None
+
+
+def _ruta_del_cobro(intent_id: str) -> str:
+    # El id va dentro de la ruta: con `/`, `?` o `..`, la petición, con la
+    # clave del comercio, llegaría a otra ruta de la API. Se comprueba su forma
+    # antes de hacer la petición, y se codifica.
+    if not is_payment_intent_id(intent_id):
+        raise ValueError(f"Invalid payment intent id (expected pi_…): {str(intent_id)[:64]!r}")
+    return f"/payment_intents/{quote(intent_id, safe='')}"
 
 # Default tolerance for the `t=` timestamp of a webhook signature: 5 minutes.
 DEFAULT_TOLERANCE_SECONDS = 300
@@ -112,10 +134,14 @@ class PaymentIntents:
         )
 
     async def retrieve(self, intent_id: str) -> dict:
-        return await _request(self._client, "GET", f"/payment_intents/{intent_id}")
+        """Retrieve a payment intent. Raises `ValueError` (no request) if
+        `intent_id` is not a payment intent id (`pi_…`)."""
+        return await _request(self._client, "GET", _ruta_del_cobro(intent_id))
 
     async def cancel(self, intent_id: str) -> dict:
-        return await _request(self._client, "POST", f"/payment_intents/{intent_id}/cancel")
+        """Cancel a payment intent. Raises `ValueError` (no request) if
+        `intent_id` is not a payment intent id (`pi_…`)."""
+        return await _request(self._client, "POST", f"{_ruta_del_cobro(intent_id)}/cancel")
 
     async def list(self, limit: int = 10, starting_after: str | None = None) -> dict:
         params = {"limit": limit}
@@ -195,11 +221,12 @@ class PaymentIntents:
         intent_id: str,
         authorization: SignedAuthorization,
     ) -> dict:
-        """Submit a signed authorization for settlement."""
+        """Submit a signed authorization for settlement. Raises `ValueError`
+        (no request) if `intent_id` is not a payment intent id (`pi_…`)."""
         return await _request(
             self._client,
             "POST",
-            f"/payment_intents/{intent_id}/authorize",
+            f"{_ruta_del_cobro(intent_id)}/authorize",
             json=serialize_authorization(authorization),
         )
 

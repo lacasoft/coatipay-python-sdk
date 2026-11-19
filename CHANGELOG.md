@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.2.1 — 2026-11-19
+
+Security fix. **Upgrade if you pass a payment id that you did not get from the
+API to `retrieve`, `cancel` or `submit_authorization`.**
+
+### Security
+
+- **Payment ids are validated and encoded before going into a request
+  path.** `payment_intents.retrieve`, `cancel` and `submit_authorization` put
+  the id into `/payment_intents/<id>…` as given: an id such as `../webhooks`
+  sent the request, with the merchant's secret key, to another API route. Now
+  an id that is not `pi_` followed by letters, digits, `_` or `-` raises
+  `ValueError` without making the request, and the id is URL-encoded. The
+  check uses `re.fullmatch`: with `re.match`, `$` accepts a trailing newline.
+  The rule is the shared vector `ids.json` of `@lacasoft/coatipay-protocol`
+  0.2.1, the same in the three SDKs.
+
+### Added
+
+- `is_payment_intent_id(value)` and `PAYMENT_INTENT_ID_PATTERN`.
+
 ## 0.2.0 — 2026-10-25
 
 For the SettlementHub of ADR-009. **Breaking**: an authorization signed with

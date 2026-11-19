@@ -25,7 +25,8 @@ from coatipay.eip712 import (
     serialize_authorization,
     sign_authorization,
 )
-from coatipay import CoatiPay
+from coatipay import PAYMENT_INTENT_ID_PATTERN, CoatiPay, is_payment_intent_id
+from coatipay.eip712 import SignedAuthorization
 from coatipay.resources import Webhooks
 
 DIRECTORIO = Path(os.environ.get("COATIPAY_VECTORES", Path(__file__).parent / "vectors"))
@@ -52,6 +53,56 @@ def test_nonce(caso):
 def test_nonce_rechazado(caso):
     with pytest.raises(ValueError):
         intent_id_of(caso["merchant"], caso["intent_id"])
+
+
+# ── id de cobro en la ruta ─────────────────────────────────────────
+
+IDS = vector("ids.json")
+_AUTORIZACION_CUALQUIERA = SignedAuthorization(
+    payer="0x0000000000000000000000000000000000000001",
+    valid_after=0,
+    valid_before=1,
+    nonce="0x" + "00" * 32,
+    signature="0x00",
+)
+
+
+def _llamadas(id_: str):
+    pi = CoatiPay(api_key="sk_test_vectores").payment_intents
+    return [
+        ("GET", f"/v1/payment_intents/{id_}", lambda: pi.retrieve(id_)),
+        ("POST", f"/v1/payment_intents/{id_}/cancel", lambda: pi.cancel(id_)),
+        (
+            "POST",
+            f"/v1/payment_intents/{id_}/authorize",
+            lambda: pi.submit_authorization(id_, _AUTORIZACION_CUALQUIERA),
+        ),
+    ]
+
+
+def test_ids_patron_del_protocolo():
+    assert IDS["patron"] == PAYMENT_INTENT_ID_PATTERN
+
+
+@pytest.mark.parametrize("id_", IDS["aceptados"])
+async def test_id_aceptado_va_a_su_ruta(id_):
+    for metodo, ruta, llamar in _llamadas(id_):
+        with patch.object(
+            httpx.AsyncClient, "request", new_callable=AsyncMock,
+            return_value=httpx.Response(200, content=b"{}"),
+        ) as peticion:
+            await llamar()
+        assert peticion.call_args.args == (metodo, ruta)
+
+
+@pytest.mark.parametrize("caso", IDS["rechazados"], ids=lambda c: c["motivo"])
+async def test_id_rechazado_sin_peticion(caso):
+    assert not is_payment_intent_id(caso["id"])
+    with patch.object(httpx.AsyncClient, "request", new_callable=AsyncMock) as peticion:
+        for _, _, llamar in _llamadas(caso["id"]):
+            with pytest.raises(ValueError):
+                await llamar()
+    peticion.assert_not_called()
 
 
 # ── autorización ERC-3009 ──────────────────────────────────────────
