@@ -20,6 +20,7 @@ from .errors import (
     WebhookSignatureError,
     classify_error,
 )
+from .resources import PAYMENT_INTENT_ID_PATTERN, is_payment_intent_id
 from .x402 import X402Middleware
 
 __all__ = [
@@ -28,6 +29,7 @@ __all__ = [
     "CoatiPayError",
     "CoatiPaySDKError",
     "NetworkError",
+    "PAYMENT_INTENT_ID_PATTERN",
     "PaymentError",
     "RateLimitError",
     "RoutingError",
@@ -37,5 +39,6 @@ __all__ = [
     "classify_error",
     "intent_id_of",
     "intent_ref",
+    "is_payment_intent_id",
 ]
-__version__ = "0.2.0"
+__version__ = "0.2.1"
